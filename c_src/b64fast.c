@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <sys/time.h>
 #include "erl_nif.h"
 
@@ -20,6 +21,7 @@ decode64_chunk(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
     ERL_NIF_TERM newargv[5];
     ErlNifBinary bin;
     void* res;
+    int illegal_char_error;
 
     if (argc != 5 || !enif_inspect_binary(env, argv[0], &bin) ||
         !enif_get_ulong(env, argv[1], &max_per_slice) ||
@@ -32,7 +34,11 @@ decode64_chunk(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
     i = offset;
     while (i < bin.size) {
         gettimeofday(&start, NULL);
-        unbase64(bin.data+i, end-i, res+i*3/4, res_size-i*3/4);
+        illegal_char_error = 0;
+        unbase64(bin.data+i, end-i, res+i*3/4, res_size-i*3/4, &illegal_char_error);
+        if (illegal_char_error){
+            return enif_make_badarg(env);
+        }
         i = end;
         if (i == bin.size) break;
         gettimeofday(&stop, NULL);
@@ -86,8 +92,43 @@ decode64(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
         return enif_make_badarg(env);
     if (bin.size == 0)
         return argv[0];
-    res_size = unbase64_size(bin.data, bin.size);
-    newargv[0] = argv[0];
+
+    // The code below removes space-like characters from the input
+    // and pads the input with '=' chars. The padding is made based on
+    // the original input size (possibly including space-like characters)
+    // to make it backwards-compatible with base64url 1.0.1 (huh).
+    ERL_NIF_TERM no_space_bin;
+    unsigned spaces_count = 0;
+    unsigned padding_size = 0;
+
+    for (int i = 0; i < bin.size; i++) {
+        if (isspace(bin.data[i])) {
+            spaces_count += 1;
+        }
+    }
+
+    if (bin.size % 4 == 3) {
+        padding_size = 1;
+    } else if (bin.size % 4 == 2) {
+        padding_size = 2;
+    }
+    unsigned no_space_bin_size = bin.size - spaces_count + padding_size;
+
+    unsigned char* no_space_binary = enif_make_new_binary(env, no_space_bin_size, &no_space_bin);
+    if (spaces_count) {
+        int j = 0;
+        for (int i = 0; i < bin.size; i++) {
+            if (likely(!isspace(bin.data[i]))) {
+               no_space_binary[j++] = bin.data[i];
+            }
+        }
+    } else {
+        memcpy(no_space_binary, bin.data, bin.size);
+    }
+    memcpy(no_space_binary + bin.size - spaces_count, "===", padding_size);
+
+    res_size = unbase64_size(no_space_binary, no_space_bin_size);
+    newargv[0] = no_space_bin;
     newargv[1] = enif_make_ulong(env, 30720); // MOD4
     newargv[2] = enif_make_ulong(env, 0);
     res = enif_alloc_resource(res_type, res_size);
@@ -220,3 +261,4 @@ static ErlNifFunc funcs[] = {
     {"decode64", 1, decode64},
 };
 ERL_NIF_INIT(b64fast, funcs, nifload, NULL, nifupgrade, NULL);
+

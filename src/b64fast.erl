@@ -1,5 +1,7 @@
 -module(b64fast).
--export([encode64/1, decode64/1]).
+
+-export([encode/1, decode/1]).
+
 -on_load(init/0).
 
 % The name of the application we're writing. This is the name
@@ -11,6 +13,20 @@
 % code from. Defined in rebar.config as so_name.
 
 -define(LIBNAME, ?MODULE).
+
+encode(Bin) when is_binary(Bin) ->
+    hd(binary:split(encode64(Bin), <<"=">>));
+encode(L) when is_list(L) ->
+    encode(iolist_to_binary(L));
+encode(_) ->
+    error(badarg).
+
+decode(Bin) when is_binary(Bin) ->
+    decode64(Bin);
+decode(L) when is_list(L) ->
+    decode(iolist_to_binary(L));
+decode(_) ->
+    error(badarg).
 
 % We could fall back to pure Erlang Base64 functions here.
 % Don't hide platform load errors for now, though.

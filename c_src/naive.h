@@ -1,15 +1,15 @@
 /* this is a naive byte-wise implementation of base64. */
 /* use https://github.com/aklomp/base64  someday */
 
+#define likely(x)      __builtin_expect(!!(x), 1) 
+
 const unsigned char
 base64_table_enc[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     "abcdefghijklmnopqrstuvwxyz"
-    "0123456789+/";
+    "0123456789-_";
 
-/* In the lookup table below, note that the value for '=' (character 61) is
- * 254, not 255. This character is used for in-band signaling of the end of
- * the datastream, and we will use that later. The characters A-Z, a-z, 0-9
+/* In the lookup table below, the characters A-Z, a-z, 0-9
  * and + / are mapped to their "decoded" values. The other bytes all map to
  * the value 255, which flags them as "invalid input". */
 
@@ -18,10 +18,10 @@ base64_table_dec[] =
 {
     255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,     /*   0..15 */
     255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,     /*  16..31 */
-    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,  62, 255, 255, 255,  63,     /*  32..47 */
-     52,  53,  54,  55,  56,  57,  58,  59,  60,  61, 255, 255, 255, 254, 255, 255,     /*  48..63 */
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,  62, 255, 62, 255,  63,     /*  32..47 */
+     52,  53,  54,  55,  56,  57,  58,  59,  60,  61, 255, 255, 255, 255, 255, 255,     /*  48..63 */
     255,   0,   1,   2,   3,   4,   5,   6,   7,   8,   9,  10,  11,  12,  13,  14,     /*  64..79 */
-     15,  16,  17,  18,  19,  20,  21,  22,  23,  24,  25, 255, 255, 255, 255, 255,     /*  80..95 */
+     15,  16,  17,  18,  19,  20,  21,  22,  23,  24,  25, 255, 255, 255, 255, 63,     /*  80..95 */
     255,  26,  27,  28,  29,  30,  31,  32,  33,  34,  35,  36,  37,  38,  39,  40,     /*  96..111 */
      41,  42,  43,  44,  45,  46,  47,  48,  49,  50,  51, 255, 255, 255, 255, 255,     /* 112..127 */
     255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,     /* 128..143 */
@@ -114,7 +114,7 @@ unbase64_size(const unsigned char* ascii, unsigned int len)
 }
 
 static unsigned int
-unbase64(const unsigned char* ascii, unsigned int len, unsigned char *bin, unsigned int bin_size)
+unbase64(const unsigned char* ascii, unsigned int len, unsigned char *bin, unsigned int bin_size, unsigned int *illegal_char_error)
 {
     if (!ascii || !bin)
     {
@@ -123,8 +123,15 @@ unbase64(const unsigned char* ascii, unsigned int len, unsigned char *bin, unsig
 
     int pad = 0;
 
+    if (len % 4 != 0)
+    {
+        *illegal_char_error = 1;
+        return 0;
+    }
+
     if (len < 2) // 2 accesses below would be OOB.
     {
+        *illegal_char_error = 1;
         return 0;
     }
     if (ascii[len - 1] == '=') ++pad;
@@ -132,12 +139,14 @@ unbase64(const unsigned char* ascii, unsigned int len, unsigned char *bin, unsig
 
     if (len - pad < 2) // truncated, less than a byte
     {
+        *illegal_char_error = 1;
         return 0;
     }
 
     unsigned int outlen = 3 * len / 4 - pad;
     if (bin_size < outlen)
     {
+        *illegal_char_error = 1;
         return 0;
     }
 
@@ -149,9 +158,15 @@ unbase64(const unsigned char* ascii, unsigned int len, unsigned char *bin, unsig
         int C = base64_table_dec[ascii[charNo+2]];
         int D = base64_table_dec[ascii[charNo+3]];
 
-        *bin++ = (A<<2) | (B>>4);
-        *bin++ = (B<<4) | (C>>2);
-        *bin++ = (C<<6) | (D);
+        if (likely(A != 255 && B != 255 && C != 255 && D != 255)){
+            *bin++ = (A<<2) | (B>>4);
+            *bin++ = (B<<4) | (C>>2);
+            *bin++ = (C<<6) | (D);
+        }
+        else {
+            *illegal_char_error = 1;
+            return 0;
+        }
     }
 
     if (pad <= 1 && charNo <= len - 3)  // single padding or truncated and at least 3 chars left
@@ -160,15 +175,28 @@ unbase64(const unsigned char* ascii, unsigned int len, unsigned char *bin, unsig
         int B = base64_table_dec[ascii[charNo+1]];
         int C = base64_table_dec[ascii[charNo+2]];
 
-        *bin++ = (A<<2) | (B>>4);
-        *bin++ = (B<<4) | (C>>2);
+        if (likely(A != 255 && B != 255 && C != 255)){
+
+            *bin++ = (A<<2) | (B>>4);
+            *bin++ = (B<<4) | (C>>2);
+        }
+        else {
+            *illegal_char_error = 1;
+            return 0;
+        }
     }
     else if (charNo <= len - 2)  // double padding or truncated and at least 2 chars left
     {
         int A = base64_table_dec[ascii[charNo]];
         int B = base64_table_dec[ascii[charNo+1]];
 
-        *bin++ = (A<<2) | (B>>4);
+        if (likely(A != 255 && B != 255)){
+            *bin++ = (A<<2) | (B>>4);
+        }
+        else {
+            *illegal_char_error = 1;
+            return 0;
+        }
     }
 
     return outlen;
