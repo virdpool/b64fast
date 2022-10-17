@@ -1,11 +1,13 @@
-Config1 = CONFIG,
 {OsType, _skip} = os:type(),
 Artifact = case OsType of
     win32 ->
-        {artifacts, ["priv/jiffy.lib"]};
+        {artifacts, ["priv/b64fast.lib"]};
     _ ->
-        {artifacts, ["priv/jiffy.so"]}
+        {artifacts, ["priv/b64fast.so"]}
 end,
+Config1 = CONFIG ++ [
+    Artifact
+],
 % rebar3 doesn't pass all needed includes, libs needed for jiffy, so this section will try to patch this flaw
 case OsType of
     win32 ->
