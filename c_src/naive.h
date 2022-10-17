@@ -1,7 +1,12 @@
 /* this is a naive byte-wise implementation of base64. */
 /* use https://github.com/aklomp/base64  someday */
-
+#if defined(_MSC_VER)
+// doesn't work yet
+// #define likely(x)       [[likely]] x
+#define likely(x)       x
+#else
 #define likely(x)      __builtin_expect(!!(x), 1) 
+#endif
 
 const unsigned char
 base64_table_enc[] =

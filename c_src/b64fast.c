@@ -1,8 +1,40 @@
 #include <ctype.h>
-#include <sys/time.h>
 #include "erl_nif.h"
-
 #include "naive.h"
+
+//https://stackoverflow.com/questions/17639213/millisecond-precision-timing-of-functions-in-c-crossplatform
+#if defined(_MSC_VER)
+#include <windows.h>
+#define TIME_TYPE LARGE_INTEGER
+#define TIME_GET(X) QueryPerformanceCounter(&X);
+
+long diff_micro(LARGE_INTEGER *start, LARGE_INTEGER *end)
+{
+    LARGE_INTEGER Frequency, elapsed;
+
+    QueryPerformanceFrequency(&Frequency); 
+    elapsed.QuadPart = end->QuadPart - start->QuadPart;
+
+    elapsed.QuadPart *= 1000000;
+    elapsed.QuadPart /= Frequency.QuadPart;
+
+    return elapsed.QuadPart;
+}
+
+
+#else
+
+#include <time.h>
+#define TIME_TYPE struct timespec
+#define TIME_GET(X) clock_gettime(CLOCK_MONOTONIC, &X);
+long diff_micro(struct timespec *start, struct timespec *end)
+{
+    /* us */
+    return ((end->tv_sec * (1000000)) + (end->tv_nsec / 1000)) -
+        ((start->tv_sec * 1000000) + (start->tv_nsec / 1000));
+}
+
+#endif
 
 /*
  * decode64_chunk is an "internal NIF" scheduled by decode64 below. It takes
@@ -16,7 +48,7 @@ decode64_chunk(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     ErlNifResourceType* res_type = (ErlNifResourceType*)enif_priv_data(env);
     unsigned long offset, i, end, max_per_slice, res_size;
-    struct timeval start, stop, slice;
+    TIME_TYPE start, stop;
     int pct, total = 0;
     ERL_NIF_TERM newargv[5];
     ErlNifBinary bin;
@@ -33,18 +65,19 @@ decode64_chunk(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
     if (end > bin.size) end = bin.size;
     i = offset;
     while (i < bin.size) {
-        gettimeofday(&start, NULL);
+        TIME_GET(start)
         illegal_char_error = 0;
-        unbase64(bin.data+i, end-i, res+i*3/4, res_size-i*3/4, &illegal_char_error);
+        unsigned char* arg_ascii = (unsigned char*)(bin.data)+i;
+        unsigned char* arg_bin = (unsigned char*)(res)+i*3/4;
+        unbase64(arg_ascii, end-i, arg_bin, res_size-i*3/4, &illegal_char_error);
         if (illegal_char_error){
             return enif_make_badarg(env);
         }
         i = end;
         if (i == bin.size) break;
-        gettimeofday(&stop, NULL);
+        TIME_GET(stop)
         /* determine how much of the timeslice was used */
-        timersub(&stop, &start, &slice);
-        pct = (int)((slice.tv_sec*1000000+slice.tv_usec)/10);
+        pct = (int)(diff_micro(&start, &stop)/10);
         total += pct;
         if (pct > 100) pct = 100;
         else if (pct == 0) pct = 1;
@@ -150,7 +183,7 @@ encode64_chunk(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     ErlNifResourceType* res_type = (ErlNifResourceType*)enif_priv_data(env);
     unsigned long offset, i, end, max_per_slice, res_size;
-    struct timeval start, stop, slice;
+    TIME_TYPE start, stop, slice;
     int pct, total = 0;
     ERL_NIF_TERM newargv[5];
     ErlNifBinary bin;
@@ -166,14 +199,15 @@ encode64_chunk(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
     if (end > bin.size) end = bin.size;
     i = offset;
     while (i < bin.size) {
-        gettimeofday(&start, NULL);
-        base64(bin.data+i, end-i, res+i*4/3, res_size-i*4/3);
+        TIME_GET(start)
+        unsigned char* arg_bin = (unsigned char*)(bin.data)+i;
+        unsigned char* arg_res = (unsigned char*)(res)+i*4/3;
+        base64(arg_bin, end-i, arg_res, res_size-i*4/3);
         i = end;
         if (i == bin.size) break;
-        gettimeofday(&stop, NULL);
+        TIME_GET(stop)
         /* determine how much of the timeslice was used */
-        timersub(&stop, &start, &slice);
-        pct = (int)((slice.tv_sec*1000000+slice.tv_usec)/10);
+        pct = (int)(diff_micro(&start, &stop)/10);
         total += pct;
         if (pct > 100) pct = 100;
         else if (pct == 0) pct = 1;

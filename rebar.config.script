@@ -1,0 +1,151 @@
+Config1 = CONFIG,
+{OsType, _skip} = os:type(),
+Artifact = case OsType of
+    win32 ->
+        {artifacts, ["priv/jiffy.lib"]};
+    _ ->
+        {artifacts, ["priv/jiffy.so"]}
+end,
+% rebar3 doesn't pass all needed includes, libs needed for jiffy, so this section will try to patch this flaw
+case OsType of
+    win32 ->
+        {port_env, PortEnv2} = lists:keyfind(port_env, 1, Config1),
+        ProgramFilesDir = os:getenv("ProgramFiles(x86)"),
+        
+        MSVCDir = ProgramFilesDir ++ "/Microsoft Visual Studio",
+        case filelib:is_dir(MSVCDir) of
+            false ->
+                throw("Microsoft Visual Studio not found. Please install MSVC 2019");
+            true ->
+                ok
+        end,
+        % NOTE only 2017 tested
+        % 2019 WIP
+        MSVC_known_version_list = ["2017", "2019", "2022"],
+        MSVC_folder = lists:foldl(fun(Version, Res) ->
+            case Res of
+                fail ->
+                    MSVCVersionDir = MSVCDir ++ "/" ++ Version,
+                    case filelib:is_dir(MSVCVersionDir) of
+                        true ->
+                            MSVCVersionDir;
+                        false ->
+                            fail
+                    end;
+                GoodRes ->
+                    GoodRes
+            end
+        end, fail, MSVC_known_version_list),
+        case MSVC_folder of
+            fail ->
+                throw("Microsoft Visual Studio found, but can't find 2017, 2019 or 2022 folder inside");
+            _ ->
+                ok
+        end,
+        
+        MSVC_folder_minor_ver_root = MSVC_folder ++ "/BuildTools/VC/Tools/MSVC",
+        {ok, MSVC_folder_minor_ver_root_list} = file:list_dir(MSVC_folder_minor_ver_root),
+        % ensure sorted
+        MSVC_folder_minor_ver = MSVC_folder_minor_ver_root ++ "/" ++ lists:last(lists:sort(MSVC_folder_minor_ver_root_list)),
+        
+        MSVC_lib = MSVC_folder_minor_ver ++ "/lib/x64",
+        MSVC_include = MSVC_folder_minor_ver ++ "/include",
+        
+        
+        MS_win_kit_dir_root = ProgramFilesDir ++ "/Windows Kits/10",
+        case filelib:is_dir(MS_win_kit_dir_root) of
+            false ->
+                throw("Windows Kits/10 is not installed");
+            true ->
+                ok
+        end,
+        
+        MS_win_kit_dir_minor_ver_root = MS_win_kit_dir_root ++ "/Lib",
+        {ok, MS_win_kit_dir_minor_ver_root_list} = file:list_dir(MS_win_kit_dir_minor_ver_root),
+        % ensure sorted
+        MS_win_kit_dir_minor_ver = lists:last(lists:sort(MS_win_kit_dir_minor_ver_root_list)),
+        
+        MS_win_kit_lib_um_path = MS_win_kit_dir_root ++ "/Lib/" ++ MS_win_kit_dir_minor_ver ++ "/um/x64",
+        MS_win_kit_lib_ucrt_path = MS_win_kit_dir_root ++ "/Lib/" ++ MS_win_kit_dir_minor_ver ++ "/ucrt/x64",
+        MS_win_kit_include_ucrt_path = MS_win_kit_dir_root ++ "/Include/" ++ MS_win_kit_dir_minor_ver ++ "/ucrt",
+        MS_win_kit_include_um_path = MS_win_kit_dir_root ++ "/Include/" ++ MS_win_kit_dir_minor_ver ++ "/um",
+        MS_win_kit_include_shared_path = MS_win_kit_dir_root ++ "/Include/" ++ MS_win_kit_dir_minor_ver ++ "/shared",
+        
+        
+        % last checks lib
+        case filelib:is_dir(MSVC_lib) of
+            false ->
+                io:format("~p~n", [MSVC_lib]),
+                throw("MSVC_lib is missing");
+            true ->
+                ok
+        end,
+        case filelib:is_dir(MS_win_kit_lib_um_path) of
+            false ->
+                io:format("~p~n", [MS_win_kit_lib_um_path]),
+                throw("MS_win_kit_lib_um_path is missing");
+            true ->
+                ok
+        end,
+        case filelib:is_dir(MS_win_kit_lib_ucrt_path) of
+            false ->
+                io:format("~p~n", [MS_win_kit_lib_ucrt_path]),
+                throw("MS_win_kit_lib_ucrt_path is missing");
+            true ->
+                ok
+        end,
+        % last checks includes
+        case filelib:is_dir(MS_win_kit_include_ucrt_path) of
+            false ->
+                io:format("~p~n", [MS_win_kit_include_ucrt_path]),
+                throw("MS_win_kit_include_ucrt_path is missing");
+            true ->
+                ok
+        end,
+        case filelib:is_dir(MS_win_kit_include_um_path) of
+            false ->
+                io:format("~p~n", [MS_win_kit_include_um_path]),
+                throw("MS_win_kit_include_um_path is missing");
+            true ->
+                ok
+        end,
+        case filelib:is_dir(MS_win_kit_include_shared_path) of
+            false ->
+                io:format("~p~n", [MS_win_kit_include_shared_path]),
+                throw("MS_win_kit_include_shared_path is missing");
+            true ->
+                ok
+        end,
+        case filelib:is_dir(MSVC_include) of
+            false ->
+                io:format("~p~n", [MSVC_include]),
+                throw("MSVC_include is missing");
+            true ->
+                ok
+        end,
+        
+        
+        % expected something like this
+        % NewPortEnv2 = PortEnv2 ++ [
+        %     {"win32", "CFLAGS", "$CFLAGS -I\"c:/Program Files (x86)/Windows Kits/10/Include/10.0.17763.0/ucrt\" -I\"c:/Program Files (x86)/Windows Kits/10/Include/10.0.17763.0/um\" -I\"c:/Program Files (x86)/Windows Kits/10/Include/10.0.17763.0/shared\" -I\"c:/Program Files (x86)/Microsoft Visual Studio/2017/BuildTools/VC/Tools/MSVC/14.16.27023/include\""},
+        %     {"win32", "ERL_LDFLAGS", "/LIBPATH:$ERL_EI_LIBDIR ei.lib /LIBPATH:\"c:/Program Files (x86)/Microsoft Visual Studio/2017/BuildTools/VC/Tools/MSVC/14.16.27023/lib/x64\" /LIBPATH:\"c:/Program Files (x86)/Windows Kits/10/Lib/10.0.17763.0/um/x64\" /LIBPATH:\"c:/Program Files (x86)/Windows Kits/10/Lib/10.0.17763.0/ucrt/x64\""}
+        % ],
+        NewPortEnv2 = PortEnv2 ++ [
+            {"win32", "ERL_LDFLAGS",
+                "/LIBPATH:$ERL_EI_LIBDIR ei.lib" ++
+                " /LIBPATH:\"" ++ MSVC_lib ++ "\"" ++
+                " /LIBPATH:\"" ++ MS_win_kit_lib_um_path ++ "\"" ++
+                " /LIBPATH:\"" ++ MS_win_kit_lib_ucrt_path ++ "\""
+            },
+            {"win32", "CFLAGS",
+                "$CFLAGS" ++
+                " -I\"" ++ MS_win_kit_include_ucrt_path ++ "\"" ++
+                " -I\"" ++ MS_win_kit_include_um_path ++ "\"" ++
+                " -I\"" ++ MS_win_kit_include_shared_path ++ "\"" ++
+                " -I\"" ++ MSVC_include ++ "\""
+            }
+        ],
+        lists:keyreplace(port_env, 1, Config1, {port_env, NewPortEnv2});
+    _ ->
+        Config1
+end.
